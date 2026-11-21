@@ -56,13 +56,12 @@ def photos():
  from collections import Counter
  key=os.getenv('SERPAPI_KEY')
  if not key: return '未設定 SERPAPI_KEY'
- cutoff=now-dt.timedelta(days=7)
  urls={canonical(x['url']) for x in data['items'] if x.get('source')=='photo' and x.get('url')}
  images={x.get('image') for x in data['items'] if x.get('source')=='photo'}
  skipped=Counter(); added=0; failures=0
  for q in ('설인아 포토','설인아 사진'):
   try:
-   r=requests.get('https://serpapi.com/search.json',params={'engine':'google_news','q':q+' when:7d','gl':'kr','hl':'ko','api_key':key},timeout=35)
+   r=requests.get('https://serpapi.com/search.json',params={'engine':'google_news','q':q,'gl':'kr','hl':'ko','api_key':key},timeout=35)
    if not r.ok: raise ValueError('HTTP '+str(r.status_code))
    j=r.json()
    if j.get('error'): raise ValueError('API error')
@@ -70,13 +69,11 @@ def photos():
    failures+=1; print('query failed:',q,type(exc).__name__); continue
   rows=list(walk(j.get('news_results') or []))
   for e in rows:
-   url=e.get('link') or ''; image=e.get('thumbnail') or e.get('thumbnail_small') or ''; title=e.get('title') or ''; raw=e.get('date') or ''
+   url=e.get('link') or ''; image=e.get('thumbnail') or e.get('thumbnail_small') or e.get('image') or ''; image=(image.get('url') or image.get('link') or '') if isinstance(image,dict) else image; title=e.get('title') or ''; raw=e.get('date') or ''
    reason=None; date=parse_date(raw)
    if not isinstance(url,str) or not url.startswith(('https://','http://')): reason='missing_url'
    elif not isinstance(image,str) or not image.startswith(('https://','http://')): reason='missing_image'
    elif not isinstance(title,str) or '설인아' not in title: reason='title_not_matched'
-   elif date is None: reason='unknown_date'
-   elif not cutoff<=date<=now: reason='outside_7_days'
    else:
     url=canonical(url)
     if url in urls or image in images: reason='duplicate'
@@ -84,7 +81,7 @@ def photos():
     skipped[reason]+=1; print('skip:',reason,'date:',repr(raw),'title:',str(title)[:160]); continue
    urls.add(url); images.add(image)
    source=e.get('source') or {}; publisher=source.get('name','') if isinstance(source,dict) else str(source)
-   add('photo',hashlib.sha256(url.encode()).hexdigest(),title,url,date.isoformat(),image=image,publisher=publisher); added+=1
+   add('photo',hashlib.sha256(url.encode()).hexdigest(),title,url,date.isoformat() if date and date<=now else "",image=image,publisher=publisher,collected_at=now.isoformat()); added+=1
   print('photo query:',q,'results:',len(rows),'added cumulative:',added,'skipped:',dict(skipped))
  return f'新增 {added} 則；略過 {sum(skipped.values())} 筆；查詢失敗 {failures} 次；'+str(dict(skipped))
 for name,fn in [('news',news),('photo',photos)]:
