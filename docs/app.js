@@ -1,3 +1,4 @@
+
 const $ = id => document.getElementById(id);
 const names = {photo:'韓媒照片', news:'韓媒新聞'};
 
@@ -26,11 +27,18 @@ function render() {
     if (!data) return;
     let root = $('feed');
     root.replaceChildren();
+
     let items = data.items.filter(x =>
         x.source === tab &&
-        ($('history').checked ||
-        (Date.parse(x.date) >= Date.now()-7*86400000 && Date.parse(x.date)<=Date.now()))
-    ).sort((a,b)=>Date.parse(b.date)-Date.parse(a.date));
+        (tab === 'photo' || $('history').checked ||
+        (Date.parse(x.date) >= Date.now()-7*86400000 &&
+         Date.parse(x.date) <= Date.now()))
+    ).sort((a,b) => tab === 'photo' ?
+        ((Date.parse(b.collected_at || b.batch)||0) -
+         (Date.parse(a.collected_at || a.batch)||0) ||
+         (Date.parse(b.date)||0) -
+         (Date.parse(a.date)||0)) :
+        Date.parse(b.date)-Date.parse(a.date));
 
     if (!items.length)
         root.textContent = '此篩選沒有已收錄資料；請查看來源狀態。';
@@ -41,7 +49,10 @@ function render() {
             p = document.createElement('p'),
             l = document.createElement('a');
 
-        s.textContent = names[x.source] + ' · ' + (x.date ? datefmt(x.date) : '發文日期未確認') + (x.candidate ? ' · 搜尋候選（內容待確認）' : '');
+        s.textContent = names[x.source] + ' · ' +
+            (x.date ? datefmt(x.date) : '發文日期未確認') +
+            (x.candidate ? ' · 搜尋候選（內容待確認）' : '');
+
         p.textContent = x.title;
         l.textContent = '閱讀原文 ↗';
 
@@ -53,11 +64,21 @@ function render() {
         l.target = '_blank';
         l.rel = 'noopener noreferrer';
         a.append(s);
+
         if (x.source === 'photo' && x.image) {
-            let img=document.createElement('img'); img.loading='lazy'; img.alt=x.title;
-            try { let u=new URL(x.image); if(u.protocol==='https:') img.src=u.href; } catch {}
-            img.onerror=()=>img.remove(); a.append(img);
+            let img = document.createElement('img');
+            img.loading = 'lazy';
+            img.alt = x.title;
+
+            try {
+                let u = new URL(x.image);
+                if (u.protocol === 'https:') img.src = u.href;
+            } catch {}
+
+            img.onerror = () => img.remove();
+            a.append(img);
         }
+
         a.append(p,l);
         root.append(a);
     }
@@ -77,8 +98,8 @@ fetch('data.json', {cache:'no-store'})
             '最近更新：' + datefmt(d.updated) :
             '尚未執行蒐集') + '\n' +
             Object.entries(d.status || {})
-            
-            .filter(([k])=>k==='news'||k==='photo').map(([k,v]) => names[k] + '：' + v)
+            .filter(([k]) => k === 'news' || k === 'photo')
+            .map(([k,v]) => names[k] + '：' + v)
             .join('｜');
         render();
     })
