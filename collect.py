@@ -11,7 +11,7 @@ data=json.loads(P.read_text(encoding="utf8")) if P.exists() else {'items':[]}; s
 def add(source,id,title,url,date,**extra):
  id=source+':'+str(id)
  if id not in seen:
-  seen.add(id); data['items'].append(dict(source=source,id=id,title=title,url=url,date=date,batch=str(now.date()),**extra)); counts[source]=counts.get(source,0)+1
+  seen.add(id); data['items'].append(dict(source=source,id=id,title=title,url=url,date=date,batch=extra.pop("batch",str(now.date())),**extra)); counts[source]=counts.get(source,0)+1
 
 def get(url,**kw):
  r=requests.get(url,timeout=35,**kw); r.raise_for_status(); return r.json()
@@ -23,8 +23,8 @@ def news():
 def canonical(url,source):
  u=urlsplit(url); host=(u.hostname or '').lower(); path=u.path
  if source=='ig' and host in ('instagram.com','www.instagram.com'):
-  m=re.fullmatch(r'/(?:p|reel)/([A-Za-z0-9_-]+)/?',path)
-  if m: return m[1], 'https://www.instagram.com'+path.rstrip('/')+'/'
+  m=re.fullmatch(r'/(?:[^/]+/)?(?:p|reel|tv)/([A-Za-z0-9_-]+)/?',path)
+  if m: return m[1], 'https://www.instagram.com/'+path.strip('/').split('/')[-2]+'/'+m[1]+'/'
  if source=='x' and host in ('x.com','www.x.com','twitter.com','www.twitter.com'):
   m=re.match(r'/[^/]+/status/(\d+)(?:/|$)',path) or re.match(r'/i/web/status/(\d+)(?:/|$)',path)
   if m: return m[1], 'https://x.com/i/web/status/'+m[1]
@@ -56,16 +56,17 @@ def ig_info(item):
  relative=str(item.get('date') or '')
  old=bool(re.search(r'\d+\s*(?:個月|年|months?|years?)|(?:[2-9]|\d{2,})\s*(?:週|周|weeks?)',relative,re.I))
  if dates and max(dates)<now.date()-dt.timedelta(days=7): old=True
- return author,old
+ return author,old,dates
 
 def social(source,queries):
  key=os.getenv('SERPAPI_KEY')
  if not key: return '未設定 SERPAPI_KEY'
  old={v[0] for item in data['items'] if item.get('source')==source and (v:=canonical(item.get('url',''),source))}
  errors=matched=unresolved=0
- for query,recent in queries:
+ rejected=duplicates=historical=0
+ for query,recent,region in queries:
   try:
-   params=dict(engine='google',q=query,api_key=key,hl='zh-TW',gl='tw')
+   params=dict(engine='google',q=query,api_key=key,hl='ko' if region=='kr' else 'zh-TW',gl=region)
    if recent: params['tbs']='qdr:w'
    r=requests.get('https://serpapi.com/search.json',params=params,timeout=45)
    r.raise_for_status(); result=r.json()
@@ -74,26 +75,36 @@ def social(source,queries):
    print(source,query,'organic:',len(rows),flush=True)
    for item in rows:
     if source=='ig':
-     author,stale=ig_info(item)
-     if not author or stale: continue
+     author,stale,dates=ig_info(item)
+     if not author:
+      rejected+=1; print(source,"author unconfirmed:",str(item.get("title", ""))[:160]); continue
     c=resolve(item.get('link'),source)
-    if not c: unresolved+=1; continue
+    if not c:
+     unresolved+=1; print(source,"unresolved:",str(item.get("link", ""))[:200]); continue
     ident,url=c; matched+=1
-    if ident in old: continue
+    if ident in old: duplicates+=1; continue
     date=''; verified=False
     if source=='x':
      try: stamp=dt.datetime.fromtimestamp(((int(ident)>>22)+1288834974657)/1000,dt.timezone.utc)
      except (ValueError,OverflowError,OSError): continue
-     if not now-dt.timedelta(days=7)<=stamp<=now: continue
+     if not now-dt.timedelta(days=7)<=stamp<=now: rejected+=1; continue
      date=stamp.isoformat(); verified=True
-    add(source,ident,str(item.get('title') or '搜尋候選貼文'),url,date,date_verified=verified,candidate=True)
+    title=str(item.get('title') or '搜尋候選貼文')
+    snippet=str(item.get('snippet') or '')[:500]
+    if snippet: title+=' — '+snippet
+    batch=str(now.date())
+    if source=='ig':
+     if stale or not dates or len(dates)!=1 or min(dates)<now.date()-dt.timedelta(days=7) or max(dates)>now.date():
+      batch='historical'; historical+=1
+     if dates: title+='（搜尋摘要日期：'+ '／'.join(map(str,sorted(dates)))+'，未確認）'
+    add(source,ident,title,url,date,date_verified=verified,candidate=True,batch=batch)
     old.add(ident)
   except Exception as e:
    errors+=1; print(source,'error:',type(e).__name__,flush=True)
- return f'搜尋候選新增 {counts.get(source,0)} 則；有效網址 {matched} 筆；未解析 {unresolved} 筆；{errors} 次查詢失敗。帳號／照片待確認；零筆不代表沒有新貼文。'
+ return f'搜尋候選新增 {counts.get(source,0)} 則；有效網址 {matched} 筆；未解析 {unresolved} 筆；篩除 {rejected} 筆；重複 {duplicates} 筆；歷史新增 {historical} 筆；{errors} 次查詢失敗。帳號／照片待確認；零筆不代表沒有新貼文。'
 
-def x(): return social('x', [('site:x.com "설인아"',True),('site:x.com "SEORINA"',True)])
-def ig(): return social('ig', [('site:instagram.com/p/ "_seorina"',True),('site:instagram.com/p/ "_seorina"',False)])
+def x(): return social('x', [('site:x.com "설인아"',True,'kr'),('site:x.com "SEORINA"',True,'tw'),('site:x.com "#설인아"',True,'kr'),('site:x.com "#SEORINA"',True,'tw'),('site:x.com "薛仁雅"',True,'tw')])
+def ig(): return social('ig', [('site:instagram.com/p/ "_seorina"',False,'tw'),('site:instagram.com/reel/ "_seorina"',False,'kr')])
 for name,fn in [('news',news),('x',x),('ig',ig)]:
  try: status[name]=fn() or '蒐集完成（限來源可取得的資料）'
  except Exception as e: status[name]='蒐集失敗或不完整：'+type(e).__name__
