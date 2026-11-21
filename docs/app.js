@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const names = {all:'全部', news:'韓媒', x:'X', ig:'IG'};
+const names = {photo:'韓媒照片', news:'韓媒新聞'};
 
 const datefmt = v => {
     let t = new Date(v);
@@ -11,10 +11,10 @@ const datefmt = v => {
         }).format(t);
 };
 
-let data, tab = 'all';
+let data, tab = 'photo';
 
 for (const [id, n] of Object.entries({
-    all:names.all, news:names.news, x:names.x, ig:names.ig
+    photo:names.photo, news:names.news
 })) {
     let b = document.createElement('button');
     b.textContent = n;
@@ -27,10 +27,10 @@ function render() {
     let root = $('feed');
     root.replaceChildren();
     let items = data.items.filter(x =>
-        (tab === 'all' || x.source === tab) &&
+        x.source === tab &&
         ($('history').checked ||
-        x.batch === data.updated?.slice(0,10))
-    ).reverse();
+        (Date.parse(x.date) >= Date.now()-7*86400000 && Date.parse(x.date)<=Date.now()))
+    ).sort((a,b)=>Date.parse(b.date)-Date.parse(a.date));
 
     if (!items.length)
         root.textContent = '此篩選沒有已收錄資料；請查看來源狀態。';
@@ -52,7 +52,13 @@ function render() {
 
         l.target = '_blank';
         l.rel = 'noopener noreferrer';
-        a.append(s,p,l);
+        a.append(s);
+        if (x.source === 'photo' && x.image) {
+            let img=document.createElement('img'); img.loading='lazy'; img.alt=x.title;
+            try { let u=new URL(x.image); if(u.protocol==='https:') img.src=u.href; } catch {}
+            img.onerror=()=>img.remove(); a.append(img);
+        }
+        a.append(p,l);
         root.append(a);
     }
 }
@@ -72,7 +78,7 @@ fetch('data.json', {cache:'no-store'})
             '尚未執行蒐集') + '\n' +
             Object.entries(d.status || {})
             
-            .map(([k,v]) => names[k] + '：' + v)
+            .filter(([k])=>k==='news'||k==='photo').map(([k,v]) => names[k] + '：' + v)
             .join('｜');
         render();
     })
