@@ -1,0 +1,6 @@
+# SEORINA DAILY 部署指南
+1. 建立 GitHub 公開 repository，將本資料夾內所有檔案（含 .github）上傳。Settings → Pages → Source 選 GitHub Actions。Actions → Daily collection → Run workflow 手動測試。成功後 Pages 提供網址。
+2. 新聞預設使用 Google News 韓文 RSS，查詢最近七天並依 RSS ID 去重；不保證完整新聞或跨媒體同稿去重。X 精確查詢台灣時間前一日，需有 recent search 權限的 X Bearer Token。IG 需 Meta Business Discovery 可用的專業帳號、授權 token、自己的 IG user ID 與有效 Graph API 版本，且目標帳號必須符合資格。至 Settings → Secrets and variables → Actions 新增 workflow 所列 Secrets 及 META_GRAPH_VERSION variable。沒有權限就顯示未檢查，不使用不可靠爬蟲。IG 初次收錄最近七天可取得貼文，之後依 ID 去重。
+3. 推播：在本機安裝 Node.js，執行 `npx web-push generate-vapid-keys --json`。將 publicKey 填入 docs/config.json 並提交，privateKey 放 GitHub Secret VAPID_PRIVATE_KEY，電子郵件放 VAPID_EMAIL。重新執行 workflow 部署。Android Chrome 打開網址按設定手機推播並允許通知，複製產生的 JSON 陣列到 GitHub Secret PUSH_SUBSCRIPTIONS。iOS 需支援 Web Push 的版本並先加入主畫面。訂閱資料及私鑰勿公開。再次手動執行 workflow 測試通知。換手機或清除瀏覽器資料後需重新訂閱。多手機可合併陣列。
+4. 排程 UTC 04:00（台灣中午 12:00），GitHub Actions 可能延遲或漏跑；公開 repo 長期無活動可能停用排程。資料收集、保存、Pages 部署成功後才推播。個別來源失敗會在頁面標記。歷史資料保存在 docs/data.json，公開 repository 的內容亦公開。請確認 API 內容展示與保存符合平台條款；如有刪除義務需自行同步移除歷史資料。本版無自動翻譯、圖片擷取、補跑遺漏日期或自動續期 token。
+5. 本機預覽：`python -m http.server 8000 --directory docs`，開 localhost:8000。手動收集：`pip install -r requirements.txt` 後 `python collect.py`。
