@@ -14,7 +14,7 @@ const datefmt = v => {
 let data, tab = 'all';
 
 for (const [id, n] of Object.entries({
-    all:names.all, news:names.news
+    all:names.all, news:names.news, x:names.x, ig:names.ig
 })) {
     let b = document.createElement('button');
     b.textContent = n;
@@ -41,7 +41,7 @@ function render() {
             p = document.createElement('p'),
             l = document.createElement('a');
 
-        s.textContent = names[x.source] + ' · ' + datefmt(x.date);
+        s.textContent = names[x.source] + ' · ' + (x.date ? datefmt(x.date) : '發文日期未確認') + (x.candidate ? ' · 搜尋候選（內容待確認）' : '');
         p.textContent = x.title;
         l.textContent = '閱讀原文 ↗';
 
@@ -71,7 +71,7 @@ fetch('data.json', {cache:'no-store'})
             '最近更新：' + datefmt(d.updated) :
             '尚未執行蒐集') + '\n' +
             Object.entries(d.status || {})
-            .filter(([k]) => k === 'news')
+            
             .map(([k,v]) => names[k] + '：' + v)
             .join('｜');
         render();
