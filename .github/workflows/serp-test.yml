@@ -1,0 +1,63 @@
+name: SerpApi search test
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test three searches
+        env:
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+        run: |
+          python - <<'PY'
+          import os, json, urllib.request, urllib.parse, urllib.error, re
+          key = os.environ.get('SERPAPI_KEY')
+          if not key:
+              raise SystemExit('Missing SERPAPI_KEY')
+          tests = [('IG week', 'site:instagram.com/p/ "_seorina"', True), ('IG all', 'site:instagram.com/p/ "_seorina"', False), ('X week', 'site:x.com "설인아"', True)]
+          report = []
+          failed = False
+          for label, query, week in tests:
+              params = dict(engine='google', q=query, api_key=key, hl='zh-TW', gl='tw')
+              if week:
+                  params['tbs'] = 'qdr:w'
+              try:
+                  with urllib.request.urlopen('https://serpapi.com/search.json?' + urllib.parse.urlencode(params), timeout=45) as response:
+                      data = json.load(response)
+                  if data.get('error'):
+                      print(label, 'API returned an error')
+                      failed = True
+                      continue
+                  rows = []
+                  for item in data.get('organic_results', []):
+                      url = item.get('link', '')
+                      parsed = urllib.parse.urlsplit(url)
+                      host = (parsed.hostname or '').lower()
+                      match = (host in ('instagram.com', 'www.instagram.com') and re.match(r'^/(?:p|reel)/[^/]+', parsed.path)) or (host in ('x.com','www.x.com','twitter.com','www.twitter.com') and re.search(r'/status/\d+', parsed.path))
+                      rows.append(dict(title=item.get('title'), link=url, snippet=item.get('snippet'), date=item.get('date'), post_candidate=bool(match)))
+                  print(label, 'organic results:', len(rows), 'post candidates:', sum(r['post_candidate'] for r in rows))
+                  for row in rows:
+                      print(json.dumps(row, ensure_ascii=False).replace(key, '[REDACTED]'))
+                  report.append(dict(test=label, results=rows))
+              except urllib.error.HTTPError as e:
+                  print(label, 'HTTP error:', e.code)
+                  failed = True
+              except Exception as e:
+                  print(label, 'error:', type(e).__name__)
+                  failed = True
+          with open('serp-report.json', 'w', encoding='utf-8') as f:
+              f.write(json.dumps(report, ensure_ascii=False, indent=2).replace(key, '[REDACTED]'))
+          if failed:
+              raise SystemExit(1)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: serp-report
+          path: serp-report.json
