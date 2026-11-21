@@ -2,6 +2,7 @@ import os,json,datetime as dt, requests, feedparser
 from pathlib import Path
 import re
 from urllib.parse import urlsplit, parse_qs
+import base64, hashlib
 from html.parser import HTMLParser
 from zoneinfo import ZoneInfo
 P=Path('docs/data.json'); now=dt.datetime.now(ZoneInfo('Asia/Taipei')); day=now.date()-dt.timedelta(days=1)
@@ -40,22 +41,39 @@ def canonical(url,source):
   if m: return m[1], 'https://x.com/i/web/status/'+m[1]
  return None
 
+def unwrap(href):
+ u=urlsplit(href); q=parse_qs(u.query)
+ if u.path=='/url': return q.get('q',q.get('url',['']))[0]
+ if u.path.startswith('/ck/a') and 'u' in q:
+  v=q['u'][0]
+  if v.startswith('a1'):
+   try: return base64.urlsafe_b64decode(v[2:]+'='*(-len(v[2:])%4)).decode()
+   except Exception: return ''
+ return href
+
 def social(source,queries):
- errors=0; matched=0
+ errors=0; matched=0; empty=0
  old={v[0] for item in data['items'] if item.get('source')==source and (v:=canonical(item.get('url',''),source))}
- for query in queries:
+ for engine,query,recent in queries:
   try:
-   r=requests.get('https://www.google.com/search',params={'q':query,'tbs':'qdr:w','hl':'ko'},headers={'User-Agent':'Mozilla/5.0'},timeout=25); r.raise_for_status()
-   if 'unusual traffic' in r.text.lower() or '/sorry/' in r.url: raise ValueError('blocked')
+   params={'q':query,'hl':'zh-TW'} if engine=='google' else {'q':query,'setlang':'zh-hant'}
+   if recent and engine=='google': params['tbs']='qdr:w'
+   r=requests.get('https://www.google.com/search' if engine=='google' else 'https://www.bing.com/search',params=params,headers={'User-Agent':'Mozilla/5.0'},timeout=25)
+   print(f'{source} {engine} {query}: HTTP {r.status_code}; bytes={len(r.content)}; final={r.url}; hash={hashlib.sha256(r.content).hexdigest()[:12]}',flush=True)
+   r.raise_for_status()
+   low=r.text.lower()
+   if 'unusual traffic' in low or '/sorry/' in r.url or 'consent.google.com' in r.url: raise ValueError('challenge_or_consent')
    parser=Links(); parser.feed(r.text)
-   for href,title in parser.links:
-    u=urlsplit(href)
-    if u.path=='/url': href=parse_qs(u.query).get('q',parse_qs(u.query).get('url',['']))[0]
+   links=[(unwrap(h),t) for h,t in parser.links]
+   found={}
+   for href,title in links:
     c=canonical(href,source)
-    if not c: continue
-    matched+=1; ident,url=c
+    if c: found[c[0]]=(c[1],title.strip())
+   print(f'anchors={len(links)}; matched={len(found)}; page_title={re.findall(r"<title[^>]*>(.*?)</title>",r.text,re.I|re.S)[:1]}',flush=True)
+   if not found: empty+=1
+   matched+=len(found)
+   for ident,(url,title) in found.items():
     if ident in old: continue
-    # Search result dates and captions are not authoritative.
     date=''; verified=False
     if source=='x':
      try:
@@ -63,14 +81,19 @@ def social(source,queries):
       if not (now-dt.timedelta(days=7)<=stamp<=now): continue
       date=stamp.isoformat(); verified=True
      except (ValueError,OverflowError,OSError): continue
-    add(source,ident,title.strip() or ('Instagram 搜尋候選貼文' if source=='ig' else 'X 搜尋候選貼文'),url,date,date_verified=verified,candidate=True)
+    else:
+     # Require explicit author wording in result title; still a candidate, not proof.
+     if not re.search(r'(?i)(?:photos? by|videos? by|reels? by|posted by).*?\(@_seorina\)',title):
+      print('IG author unconfirmed:',ident,repr(title[:120]),flush=True)
+      continue
+    add(source,ident,title or '搜尋候選貼文',url,date,date_verified=verified,candidate=True)
     old.add(ident)
   except Exception as e:
-   errors+=1; print(source,type(e).__name__)
- return f'搜尋候選新增 {counts.get(source,0)} 則；命中 {matched} 筆；{errors} 次查詢失敗。結果不完整，帳號／照片待確認；零筆不代表沒有新貼文。'
+   errors+=1; print(source,engine,type(e).__name__,str(e)[:200],flush=True)
+ return f'搜尋候選新增 {counts.get(source,0)} 則；命中 {matched} 筆；{empty} 次零命中；{errors} 次查詢失敗。結果不完整，帳號／照片待確認；零筆不代表沒有新貼文。'
 
-def x(): return social('x',['site:x.com "#설인아" photo','site:x.com "#SEORINA" photo','site:twitter.com "설인아" photo'])
-def ig(): return social('ig',['site:instagram.com/p/ "_seorina"','site:instagram.com/reel/ "_seorina"'])
+def x(): return social('x',[(e,q,True) for e in ('google','bing') for q in ('site:x.com "설인아"','site:x.com "SEORINA"','site:twitter.com "설인아"')])
+def ig(): return social('ig',[(e,q,w) for e in ('google','bing') for q in ('site:instagram.com/p/ "_seorina"','site:instagram.com/reel/ "_seorina"') for w in ((True,False) if e=='google' else (False,))])
 for name,fn in [('news',news),('x',x),('ig',ig)]:
  try: status[name]=fn() or '蒐集完成（限來源可取得的資料）'
  except Exception as e: status[name]='蒐集失敗或不完整：'+type(e).__name__
